@@ -49,6 +49,14 @@ function parseArgs(argv) {
   return args;
 }
 
+/**
+ * 页面仓库是公开的，Actions 日志所有人可见。
+ * 所以在 CI 里只打印汇总（档位 + 条数），不打印合同名 / 对方单位 / 金额 / 日期。
+ * 本地运行（没有 GITHUB_ACTIONS 环境变量）打印完整明细；
+ * 确实需要在 CI 看明细时设 VERBOSE=1（仅在仓库改回私有时用）。
+ */
+const SUMMARY_ONLY = process.env.GITHUB_ACTIONS === 'true' && process.env.VERBOSE !== '1';
+
 const HELP = `
 合同提醒脚本
 
@@ -340,6 +348,10 @@ async function main() {
     byTier.get(a.tier).push(a);
   });
   [...byTier.entries()].forEach(([tier, list]) => {
+    if (SUMMARY_ONLY) {
+      console.log(`  ${lib.tierLabel(tier)}：${list.length} 条`);
+      return;
+    }
     console.log(`\n${lib.tierLabel(tier)}（${list.length}）`);
     list.forEach((a) => {
       const what = a.kind === 'renewal'
@@ -349,6 +361,9 @@ async function main() {
       console.log(`    日期 ${a.targetDate}  ${dayText(a.days)}  金额 ${a.amount ? lib.formatMoney(a.amount) : '—'}  → ${a.recipients.map(maskEmail).join(', ')}`);
     });
   });
+  if (SUMMARY_ONLY) {
+    console.log(`\n（公开仓库日志不打印合同明细，本地运行可看完整清单）`);
+  }
 
   if (args.dryRun) {
     console.log(`\n[dry-run] 共 ${due.length} 条，未发送、未写入 sent-log。`);
