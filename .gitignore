@@ -1,0 +1,9 @@
+node_modules/
+npm-debug.log*
+.env
+.DS_Store
+*.log
+preview.html
+
+# 合同数据存在独立的私有仓库，本仓库不放任何数据文件
+data/

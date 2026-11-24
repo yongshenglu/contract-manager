@@ -1,0 +1,93 @@
+# 合同到期与付款提醒
+#
+# 页面仓库是公开的，合同数据在私有仓库 contract-manager-data 里。
+# 这里通过 DATA_TOKEN 跨仓库读数据、回写提醒发送记录。
+# 注意：Actions 日志在公开仓库下所有人可见，所以脚本里的邮箱一律打码。
+name: 合同提醒
+
+on:
+  schedule:
+    # UTC 01:17 = 北京时间 09:17（避开整点高峰，实际可能延迟 5~20 分钟）
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+    inputs:
+      simulate_date:
+        description: '模拟日期 YYYY-MM-DD（留空 = 今天）'
+        required: false
+        default: ''
+      dry_run:
+        description: '只打印不发信'
+        type: boolean
+        default: false
+
+# 页面仓库只读：数据的写入走 DATA_TOKEN 作用在私有仓库上
+permissions:
+  contents: read
+
+concurrency:
+  group: contract-remind
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # 跨仓库访问私有数据仓库
+      DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+      DATA_OWNER: ${{ vars.DATA_OWNER }}
+      DATA_REPO: ${{ vars.DATA_REPO }}
+      DATA_BRANCH: ${{ vars.DATA_BRANCH }}
+      DATA_CONTRACTS_PATH: ${{ vars.DATA_CONTRACTS_PATH }}
+      DATA_LOG_PATH: ${{ vars.DATA_LOG_PATH }}
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      # 数据不在本仓库，先从私有数据仓库拉下来
+      - name: 拉取私有数据仓库的合同数据
+        run: node scripts/data-io.js fetch
+
+      # 数据格式错误时在这里就失败，避免静默漏发
+      - name: 校验合同数据
+        run: node scripts/check.js --dry-run --all
+
+      - name: 运行核心规则测试
+        run: node scripts/test.js
+
+      - name: 运行前端冒烟测试
+        run: node scripts/ui-test.js
+
+      - name: 计算并发送提醒
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          PAGE_URL: ${{ secrets.PAGE_URL }}
+          SIMULATE_DATE: ${{ github.event.inputs.simulate_date }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -e
+          ARGS=""
+          if [ -n "$SIMULATE_DATE" ]; then ARGS="$ARGS --date $SIMULATE_DATE"; fi
+          if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          echo "参数:${ARGS:-（默认：用今天、真实发送）}"
+          node scripts/check.js $ARGS
+
+      # 把提醒记录写回【私有数据仓库】—— 不写本仓库，公开日志里也不会留合同信息
+      - name: 回写提醒发送记录
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: node scripts/data-io.js push-log

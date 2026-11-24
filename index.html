@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>合同管理 · 到期续签与付款提醒</title>
+<meta name="description" content="合同到期续签与分期付款管理，风险分级与邮件提醒">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232563eb'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'>合</text></svg>">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════ 顶栏 -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="logo">合</div>
+      <div class="brand-text">
+        <h1>合同管理</h1>
+        <p id="todayLine">—</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="mode-badge" id="modeBadge" title="数据来源">
+        <span class="dot"></span><span id="modeText">加载中…</span>
+      </span>
+      <button class="btn btn-ghost" id="btnRefresh" title="重新加载数据">刷新</button>
+      <button class="btn btn-ghost" id="btnSettings">设置</button>
+      <button class="btn btn-primary" id="btnNew">＋ 新增合同</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ══════════════════════════════════════════ 统计卡片 -->
+  <section class="stats" id="stats"></section>
+
+  <!-- ══════════════════════════════════════════ 工具栏 -->
+  <section class="toolbar">
+    <div class="search">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input type="search" id="searchInput" placeholder="搜索合同名称 / 对方 / 负责人…" autocomplete="off">
+    </div>
+    <select id="riskFilter" class="select">
+      <option value="">全部风险</option>
+      <option value="expired">已过期</option>
+      <option value="d30">30 天内</option>
+      <option value="d90">90 天内</option>
+      <option value="normal">正常</option>
+    </select>
+    <select id="categoryFilter" class="select">
+      <option value="">全部类别</option>
+    </select>
+    <select id="sortSelect" class="select">
+      <option value="days-asc">按剩余天数 ↑</option>
+      <option value="days-desc">按剩余天数 ↓</option>
+      <option value="amount-desc">按金额 ↓</option>
+      <option value="title">按名称</option>
+      <option value="updated">按最近修改</option>
+    </select>
+    <span class="result-count" id="resultCount"></span>
+  </section>
+
+  <!-- ══════════════════════════════════════════ 合同表 -->
+  <section class="panel">
+    <div class="table-scroll">
+      <table class="ctable" id="contractTable">
+        <thead>
+          <tr>
+            <th class="c-title">合同</th>
+            <th>到期日</th>
+            <th class="c-days">剩余</th>
+            <th>风险</th>
+            <th class="c-num">金额</th>
+            <th class="c-pay">分期付款</th>
+            <th>负责人</th>
+            <th class="c-act"></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="emptyState" hidden>
+      <div class="empty-icon" id="emptyIcon">📄</div>
+      <p class="empty-title" id="emptyTitle">没有符合条件的合同</p>
+      <p class="empty-sub" id="emptySub">换个筛选条件，或点击右上角「＋ 新增合同」</p>
+      <button class="btn btn-primary" id="btnGoSetup" hidden>去设置数据仓库</button>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ 提醒预览 -->
+  <section class="panel alerts-panel">
+    <button class="panel-head" id="alertsToggle" aria-expanded="false">
+      <span class="ph-left">
+        <span class="ph-icon">🔔</span>
+        <span class="ph-title">提醒预览</span>
+        <span class="chip" id="alertsCount">0</span>
+        <span class="chip chip-muted" id="alertsMode">—</span>
+      </span>
+      <span class="ph-caret" id="alertsCaret">▸</span>
+    </button>
+    <div class="panel-body" id="alertsBody" hidden>
+      <p class="alerts-hint" id="alertsHint"></p>
+      <div class="alerts-list" id="alertsList"></div>
+      <div class="alerts-foot">
+        <code>node scripts/check.js --dry-run</code> 可在本地核对；真实发送由 GitHub Actions 每天定时执行。
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ 页脚 -->
+  <footer class="foot">
+    合同数据存在<b>私有仓库</b>，本页面不含任何数据 · 提醒档位 T-90 / T-60 / T-30 / T-7 / T-0，每档一次 · 已过期与已逾期每 7 天追一次
+  </footer>
+</main>
+
+<!-- ══════════════════════════════════════════ 合同编辑弹窗 -->
+<div class="backdrop" id="contractBackdrop" hidden>
+  <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="contractModalTitle">
+    <div class="modal-head">
+      <h2 id="contractModalTitle">新增合同</h2>
+      <button class="icon-btn" data-close="contractBackdrop" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="contractForm" novalidate>
+        <input type="hidden" name="id">
+
+        <div class="grid">
+          <label class="field span2">
+            <span class="lbl">合同名称 <b>*</b></span>
+            <input name="title" required placeholder="如：办公楼租赁合同" maxlength="100">
+          </label>
+
+          <label class="field">
+            <span class="lbl">对方单位</span>
+            <input name="counterparty" placeholder="如：XX置业有限公司" maxlength="100">
+          </label>
+
+          <label class="field">
+            <span class="lbl">类别</span>
+            <input name="category" list="categoryList" placeholder="租赁 / 服务 / 保险…" maxlength="30">
+            <datalist id="categoryList">
+              <option value="租赁"><option value="服务"><option value="保险">
+              <option value="采购"><option value="劳务"><option value="其他">
+            </datalist>
+          </label>
+
+          <label class="field">
+            <span class="lbl">开始日期</span>
+            <input type="date" name="startDate">
+          </label>
+
+          <label class="field">
+            <span class="lbl">到期日期 <b>*</b></span>
+            <input type="date" name="endDate" required>
+            <span class="hint" id="endDateHint"></span>
+          </label>
+
+          <label class="field">
+            <span class="lbl">合同金额</span>
+            <input type="number" name="amount" min="0" step="0.01" placeholder="0.00">
+          </label>
+
+          <label class="field">
+            <span class="lbl">负责人</span>
+            <input name="owner" placeholder="如：张三" maxlength="30">
+          </label>
+
+          <label class="field span2">
+            <span class="lbl">提醒收件人 <span class="opt">留空 = 用默认收件人</span></span>
+            <input name="notify" placeholder="a@x.com, b@x.com" maxlength="300">
+          </label>
+
+          <label class="field span2">
+            <span class="lbl">备注</span>
+            <textarea name="notes" rows="2" placeholder="续签要点、特殊条款…" maxlength="1000"></textarea>
+          </label>
+
+          <label class="check span2">
+            <input type="checkbox" name="autoRenew">
+            <span>合同含自动续签条款</span>
+          </label>
+        </div>
+
+        <!-- 分期付款 -->
+        <div class="subhead">
+          <span>分期付款</span>
+          <button type="button" class="btn btn-small" id="btnAddPayment">＋ 添加一期</button>
+        </div>
+        <div class="pay-head">
+          <span>款项名称</span><span>应付日期</span><span>金额</span><span>状态</span><span></span>
+        </div>
+        <div class="pay-list" id="payList"></div>
+        <div class="pay-empty" id="payEmpty">暂无分期付款计划</div>
+      </form>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" id="btnDeleteContract" hidden>删除合同</button>
+      <span class="spacer"></span>
+      <button class="btn btn-ghost" data-close="contractBackdrop">取消</button>
+      <button class="btn btn-primary" id="btnSaveContract">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ 设置弹窗 -->
+<div class="backdrop" id="settingsBackdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <div class="modal-head">
+      <h2 id="settingsModalTitle">设置</h2>
+      <button class="icon-btn" data-close="settingsBackdrop" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <div class="set-section">
+        <h3>数据仓库连接 <span class="opt">合同数据存在这里，页面本身不含数据</span></h3>
+        <p class="set-note">
+          看板是公开的静态页，合同数据存在一个<b>私有</b>仓库里。页面要读它，
+          就得在你自己浏览器里放一个 GitHub Token（只存本地，不会提交进任何仓库）。
+        </p>
+        <label class="field">
+          <span class="lbl">GitHub Token</span>
+          <div class="token-row">
+            <input type="password" id="setToken" placeholder="github_pat_… 或 ghp_…">
+            <button type="button" class="btn btn-small" id="btnToggleToken">显示</button>
+          </div>
+          <span class="hint">
+            建议用 Fine-grained token，<b>只授权数据仓库</b>（如 <code>contract-manager-data</code>），
+            权限勾选 <b>Contents: Read and write</b>。泄露时去 GitHub 后台撤销即可。
+          </span>
+        </label>
+        <div class="grid">
+          <label class="field">
+            <span class="lbl">数据仓库所有者</span>
+            <input id="setOwner" placeholder="yongshenglu">
+          </label>
+          <label class="field">
+            <span class="lbl">数据仓库名</span>
+            <input id="setRepo" placeholder="contract-manager-data">
+          </label>
+          <label class="field">
+            <span class="lbl">分支</span>
+            <input id="setBranch" placeholder="main">
+          </label>
+          <label class="field">
+            <span class="lbl">合同文件</span>
+            <input id="setContractsPath" placeholder="contracts.js">
+          </label>
+          <label class="field span2">
+            <span class="lbl">提醒记录文件</span>
+            <input id="setLogPath" placeholder="sent-log.json">
+          </label>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="btnTestGitHub">测试连接</button>
+          <button class="btn btn-ghost" id="btnClearGitHub">断开</button>
+          <span class="conn-state" id="connState"></span>
+        </div>
+      </div>
+
+      <div class="set-section">
+        <h3>提醒规则 <span class="opt">存进数据仓库，换设备也生效</span></h3>
+        <div class="grid">
+          <label class="field span2">
+            <span class="lbl">默认收件人 <span class="opt">逗号分隔，合同可用 notify 覆盖</span></span>
+            <input id="setRecipients" placeholder="you@qq.com, me@163.com">
+          </label>
+          <label class="field">
+            <span class="lbl">提醒档位（天）</span>
+            <input id="setTiers" placeholder="90,60,30,7,0">
+            <span class="hint">从大到小，最后一档 0 表示到期当天</span>
+          </label>
+          <label class="field">
+            <span class="lbl">过期追发周期（天）</span>
+            <input type="number" id="setRepeat" min="1" max="90" value="7">
+          </label>
+        </div>
+        <p class="set-note" style="margin-top:10px">
+          这三项会写进数据仓库的 <code>contracts.js</code>，所以需要先在上面连接成功。
+        </p>
+      </div>
+
+      <div class="set-section">
+        <h3>数据备份</h3>
+        <div class="btn-row">
+          <button class="btn btn-ghost" id="btnExportJson">导出 JSON 备份</button>
+          <button class="btn btn-ghost" id="btnImportJson">导入 JSON</button>
+          <input type="file" id="importFile" accept=".json,application/json" hidden>
+          <button class="btn btn-ghost" id="btnDownloadJs">导出 contracts.js</button>
+        </div>
+        <p class="set-note">
+          导出的是当前页面内存里的数据。导入会先覆盖内存、再提交回数据仓库（需已连接）。
+        </p>
+      </div>
+
+    </div>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button class="btn btn-ghost" data-close="settingsBackdrop">关闭</button>
+      <button class="btn btn-primary" id="btnSaveSettings">保存设置</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ 提醒详情弹窗 -->
+<div class="backdrop" id="alertsBackdrop" hidden>
+  <div class="modal modal-lg" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>提醒详情</h2>
+      <button class="icon-btn" data-close="alertsBackdrop" aria-label="关闭">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="alerts-list" id="alertsFullList"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button class="btn btn-ghost" data-close="alertsBackdrop">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="lib.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
