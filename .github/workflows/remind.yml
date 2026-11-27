@@ -7,9 +7,14 @@ name: 合同提醒
 
 on:
   schedule:
-    # ⚠ 临时测量值：每 10 分钟一次，用来测 GitHub 定时器「配置时间 → 实际触发」的真实偏移
-    # 正式值待实测定（目标：北京 09:30 = UTC 01:30）。测完立即改回每日一次。
-    - cron: '*/10 * * * *'
+    # 每天两个时点，配合下面「只在 UTC 01:00-02:59 发信」的闸门。
+    #
+    # 为什么是两个：实测 GitHub 定时器在这个仓库上会固定晚约 8 小时
+    #   （11-25 01:17 UTC 配置 → 09:48 实际；11-26 同配置 → 09:29 实际）。
+    # 两个时点相差正好 16 小时，无论偏移是 0 还是 +8h，总有一次落在
+    # UTC 01:30 = 北京 09:30；另一次被闸门挡掉，不发信。
+    - cron: '30 1 * * *'
+    - cron: '30 17 * * *'
   workflow_dispatch:
     inputs:
       simulate_date:
@@ -80,8 +85,22 @@ jobs:
           PAGE_URL: ${{ secrets.PAGE_URL }}
           SIMULATE_DATE: ${{ github.event.inputs.simulate_date }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -e
+
+          # 定时触发时，只在 UTC 01:00-02:59（北京 09:00-10:59）真正发信。
+          # 另一个时点的运行会走到这里但直接跳过，避免夜里/下午发邮件。
+          # 手动 workflow_dispatch 不受限制（测试、模拟日期都能正常跑）。
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            H=$(date -u +%H)
+            H=${H#0}
+            case "$H" in
+              0|1|2) ;;
+              *) echo "跳过发信：当前 UTC ${H} 点，不在发送时段（UTC 01:00-02:59 = 北京 09:00-10:59）"; exit 0 ;;
+            esac
+          fi
+
           ARGS=""
           if [ -n "$SIMULATE_DATE" ]; then ARGS="$ARGS --date $SIMULATE_DATE"; fi
           if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
